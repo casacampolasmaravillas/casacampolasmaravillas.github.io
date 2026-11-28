@@ -37,7 +37,10 @@ code{background:#f1ece2;padding:0 4px;border-radius:4px}
   var API = 'https://reservas-casacampo.reservas-casacampo.workers.dev';
   var res = document.getElementById('res');
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
-  var clave = function () { try { return sessionStorage.getItem('cc_clave_pruebas') || ''; } catch (e) { return ''; } };
+  // Solo caracteres visibles ASCII: un invisible pegado (BOM, ancho cero) impide que el navegador envíe el encabezado.
+  var limpiar = function (s) { return String(s || '').replace(/[^\x21-\x7E]/g, ''); };
+  var cruda = function () { try { return sessionStorage.getItem('cc_clave_pruebas') || ''; } catch (e) { return ''; } };
+  var clave = function () { return limpiar(cruda()); };
   async function revisar() {
     var filas = [], f = function (t, v) { filas.push('<tr><th>' + esc(t) + '</th><td>' + v + '</td></tr>'); };
     // a) Qué página y qué app.js usaría este navegador (con su caché) frente a lo publicado ahora
@@ -54,6 +57,7 @@ code{background:#f1ece2;padding:0 4px;border-radius:4px}
     // b) Clave de pruebas
     var k = clave();
     f('Clave en esta pestaña', k ? '✅ guardada (' + k.length + ' caracteres; no se muestra)' : '❌ no hay clave en esta pestaña');
+    if (cruda() && cruda() !== k) { f('Caracteres invisibles', '⚠️ tenía ' + (cruda().length - k.length) + ' carácter(es) invisible(s): ya se limpiaron'); try { sessionStorage.setItem('cc_clave_pruebas', k); } catch (e) {} }
     // Huellas: longitud y primeros 10 caracteres del SHA-256 (no permiten reconstruir la clave)
     try {
       var hs = await (await fetch(API + '/api/pruebas/huella-clave', { cache: 'no-store' })).json();
@@ -82,7 +86,7 @@ code{background:#f1ece2;padding:0 4px;border-radius:4px}
     f('Navegador', esc(navigator.userAgent.slice(0, 180)));
     res.innerHTML = '<table>' + filas.join('') + '</table>';
   }
-  document.getElementById('guardar').onclick = function () { var v = document.getElementById('clave').value.trim(); if (v.length >= 32) { try { sessionStorage.setItem('cc_clave_pruebas', v); } catch (e) {} } document.getElementById('clave').value = ''; revisar(); };
+  document.getElementById('guardar').onclick = function () { var v = limpiar(document.getElementById('clave').value); if (v.length >= 32) { try { sessionStorage.setItem('cc_clave_pruebas', v); } catch (e) {} } document.getElementById('clave').value = ''; revisar(); };
   document.getElementById('abrir').onclick = function (e) { e.preventDefault(); location.href = './?v=' + Date.now() + '#prueba'; };
   document.getElementById('copiar').onclick = async function () { try { await navigator.clipboard.writeText(res.innerText); this.textContent = '¡Copiado!'; } catch (e) {} };
   revisar();

@@ -22,6 +22,11 @@ name = "LIMITE_BLOQUEOS"
 namespace_id = "1002"
 simple = { limit = 5, period = 60 }
 
+# Registros persistentes de cada solicitud (Workers Logs) para diagnosticar fallas aunque nadie esté mirando en vivo.
+# Los registros nunca incluyen claves, tokens ni datos personales.
+[observability]
+enabled = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "reservas"

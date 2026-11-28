@@ -394,16 +394,21 @@
     const huella = JSON.stringify({ ...cuerpo });
     if (huella !== idemDatos) { idemDatos = huella; idemClave = crypto.randomUUID(); } // reintento tras un corte: misma clave, misma reserva
     boton.disabled = true; boton.dataset.enviando = '1'; boton.textContent = 'Reservando tus fechas…'; err.textContent = '';
-    let d = null, status = 0;
+    let d = null, status = 0, falla = '';
     try {
-      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 20000);
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 30000);
       const r = await fetch(CASA.api_reservas.replace(/\/$/, '') + '/api/reservas', {
         method: 'POST', signal: ctl.signal,
         headers: { 'content-type': 'application/json', 'idempotency-key': idemClave, ...(clavePrueba() ? { 'x-clave-pruebas': clavePrueba() } : {}) },
         body: JSON.stringify({ ...cuerpo, turnstile: tsToken })
       });
       clearTimeout(to); status = r.status; d = await r.json().catch(() => ({}));
-    } catch { status = 0; }
+    } catch (e) {
+      // Se distingue la causa real: tiempo agotado, solicitud que el navegador no pudo armar, o red/bloqueo.
+      status = 0;
+      falla = e && e.name === 'AbortError' ? 'tiempo' : /ISO-8859-1|headers|Invalid/i.test(String(e && e.message)) ? 'armado' : 'red';
+      DIAG.fallidas.push(`reserva no enviada (${falla}): ${String(e && e.message || e).slice(0, 140)}`);
+    }
     if ((status === 200 || status === 201) && d && d.acceso) {
       guardarReserva(d.numero, d.acceso);
       location.href = 'reserva.html#t=' + encodeURIComponent(d.acceso);
@@ -413,7 +418,10 @@
     delete boton.dataset.enviando; reintentarTurnstile(); actualizarFormulario();
     if (status !== 0) idemDatos = null; // respuesta definitiva: el próximo intento es una reserva nueva
     if (status === 409) { SRV = null; err.textContent = (d && d.mensaje) || 'Esas fechas ya no están disponibles. Elegí otras fechas.'; return; }
-    err.textContent = status === 0 ? 'No pudimos conectarnos. Revisá tu conexión y probá de nuevo: si la reserva se había creado, no se duplica.'
+    err.textContent = status === 0
+      ? (falla === 'tiempo' ? 'El servidor tardó demasiado en responder. Probá de nuevo en un momento: si la reserva se había creado, no se duplica.'
+        : falla === 'armado' ? 'Tu navegador no pudo enviar la reserva (dato con caracteres inválidos). Recargá la página e intentá de nuevo.'
+        : 'No pudimos conectarnos con el servidor. Revisá tu conexión (o un bloqueador de anuncios) y probá de nuevo: si la reserva se había creado, no se duplica.')
       : (d && d.mensaje) || 'No pudimos completar la reserva. Probá de nuevo o escribinos por WhatsApp.';
   }
 
@@ -423,14 +431,17 @@
   // MODO PRUEBA PRIVADO (solo dueños): abrir la web con #prueba y pegar la clave de pruebas. Las solicitudes quedan
   // marcadas como PRUEBA y no bloquean calendarios. Sin la clave, el servidor las rechaza. Los visitantes no ven nada.
   const CLAVE_SS = 'cc_clave_pruebas';
-  const ssGet = () => { try { return sessionStorage.getItem(CLAVE_SS) || ''; } catch { return ''; } };
+  // La clave viaja en un encabezado HTTP: solo admite caracteres visibles ASCII. Un carácter invisible pegado sin querer
+  // (BOM, espacio de ancho cero, salto) hace que el navegador NO envíe la solicitud ("No pudimos conectarnos"). Se limpia siempre.
+  const limpiarClave = s => String(s || '').replace(/[^\x21-\x7E]/g, '');
+  const ssGet = () => { try { return limpiarClave(sessionStorage.getItem(CLAVE_SS)); } catch { return ''; } };
   const clavePrueba = () => (CASA && CASA.api_reservas && CASA.turnstile_site_key ? ssGet() : '');
   function activarModoPrueba() { // se llama después de cargar casa.json
     // Solo modo prueba: "#prueba&vence=120" acorta la retención (5 a 600 s) para probar vencimientos. El servidor lo ignora sin la clave.
     const v = Number((location.hash.match(/[#&]vence=(\d+)/) || [])[1]);
     try { if (v >= 5 && v <= 600) sessionStorage.setItem('cc_vence_prueba', String(v)); else if (location.hash.startsWith('#prueba')) sessionStorage.removeItem('cc_vence_prueba'); } catch { }
     if (location.hash.startsWith('#prueba') && clavePrueba() === '' && CASA && CASA.api_reservas && CASA.turnstile_site_key) {
-      const k = (window.prompt('Modo prueba (solo dueños). Pegá la clave de pruebas:') || '').trim();
+      const k = limpiarClave(window.prompt('Modo prueba (solo dueños). Pegá la clave de pruebas:'));
       if (k.length >= 32) { try { sessionStorage.setItem(CLAVE_SS, k); } catch { } }
       else if (k) window.alert('Esa clave es demasiado corta: el modo prueba no se activó.');
     }
@@ -467,6 +478,8 @@
     const clave = ssGet();
     fila('Franja «Modo prueba»', '✅ visible');
     fila('Clave en esta pestaña', clave ? `✅ guardada (${clave.length} caracteres; no se muestra)` : '❌ no hay clave');
+    let cruda = ''; try { cruda = sessionStorage.getItem(CLAVE_SS) || ''; } catch { }
+    if (cruda && cruda !== clave) fila('Caracteres invisibles', `⚠️ la clave guardada tenía ${cruda.length - clave.length} carácter(es) invisible(s) pegados sin querer; se limpian automáticamente antes de enviar`);
     // 3) ¿El servidor reconoce la clave?
     let servidor = '⚠️ no se pudo consultar';
     try {

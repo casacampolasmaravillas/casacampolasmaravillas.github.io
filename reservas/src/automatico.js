@@ -56,6 +56,7 @@ export async function iniciarReserva(req, env, ctx, cors) {
   if (!/^[A-Za-z0-9-]{16,64}$/.test(clave)) throw new ErrorUsuario('idempotencia', 'Falta el encabezado Idempotency-Key.');
   const body = await leerJson(req);
   const medio = body.medio_pago === 'transferencia' ? 'transferencia' : 'mercadopago';
+  console.log('reserva: pedido recibido', JSON.stringify({ prueba: esPrueba, medio, ingreso: body.ingreso, salida: body.salida }));
   if (!esPrueba) {
     if (env.MODO_RESERVA !== 'instantanea') throw new ErrorUsuario('no_habilitado', 'Por ahora las reservas se reciben por WhatsApp.', 403);
     if (medio === 'mercadopago' && env.PAGOS_HABILITADOS !== 'true') throw new ErrorUsuario('no_habilitado', 'El pago con Mercado Pago todavía no está habilitado.', 403);
@@ -123,6 +124,7 @@ export async function iniciarReserva(req, env, ctx, cors) {
     }
   }
   if (!numero) throw new Error('No se pudo generar un número de reserva único');
+  console.log('reserva: noches retenidas', numero, origen, medio);
 
   // c) Retención provisional en el gestor de canales (si lo hay). Si no responde, se cancela todo: no se cobra.
   let r = await fila(env, id);
@@ -139,8 +141,11 @@ export async function iniciarReserva(req, env, ctx, cors) {
   // d) Pago. Mercado Pago sigue en modo prueba (doble traba). Si falla, la retención sigue y el huésped reintenta.
   r = await fila(env, id);
   if (medio === 'mercadopago') {
-    try { await exigirModoPrueba(env); await generarOrden(env, id); }
-    catch (err) { await evento(env, id, 'orden_no_generada', { error: String(err && err.message || err).slice(0, 200) }).run(); }
+    try { await exigirModoPrueba(env); await generarOrden(env, id); console.log('reserva: orden de Mercado Pago (prueba) creada', numero); }
+    catch (err) {
+      console.warn('reserva: orden de Mercado Pago NO generada', numero, err && err.codigo || '', String(err && err.message || err).slice(0, 160));
+      await evento(env, id, 'orden_no_generada', { error: String(err && err.message || err).slice(0, 200) }).run();
+    }
   } else {
     ctx.waitUntil(avisarDuenos(env, [`🏦 ${etiqueta(r)} · Reserva con TRANSFERENCIA pendiente`,
       `${fmtFecha(r.ingreso)} → ${fmtFecha(r.salida)} · ${r.noches} noches · ${r.huespedes} huéspedes`,
